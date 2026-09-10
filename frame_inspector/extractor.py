@@ -1,8 +1,9 @@
 """Frame extraction and classification using FFprobe/FFmpeg."""
 
 import json
+import shutil
 import subprocess
-import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -87,32 +88,48 @@ class FrameExtractor:
 
         out_path = Path(output_dir)
         frames = self.analyze_frames()
-        extracted: Dict[str, List[str]] = {}
+        extracted: Dict[str, List[str]] = {ftype: [] for ftype in frame_types}
 
-        for ftype in frame_types:
-            if not frames[ftype]:
-                continue
+        with tempfile.TemporaryDirectory(prefix="frame-inspector-") as temp_dir:
+            temp_pattern = str(Path(temp_dir) / "frame_%08d.png")
+            self._extract_all_frames(temp_pattern)
+            extracted_indexes = {ftype: 0 for ftype in frame_types}
 
-            type_dir = out_path / f"{ftype.lower()}_frames"
-            type_dir.mkdir(parents=True, exist_ok=True)
-            extracted[ftype] = []
+            for index, frame in enumerate(self._ordered_frames(frames), start=1):
+                frame_type = frame["type"]
+                if frame_type not in extracted:
+                    continue
 
-            for i, frame in enumerate(frames[ftype]):
-                output_file = type_dir / f"frame_{i:04d}.png"
-                self._extract_single_frame(frame["pts_time"], output_file)
-                extracted[ftype].append(str(output_file))
+                type_dir = out_path / f"{frame_type.lower()}_frames"
+                type_dir.mkdir(parents=True, exist_ok=True)
+                type_index = extracted_indexes[frame_type]
+                output_file = type_dir / f"frame_{type_index:04d}.png"
+                source_file = Path(temp_dir) / f"frame_{index:08d}.png"
+                if not source_file.exists():
+                    raise RuntimeError(f"FFmpeg did not create expected frame: {source_file}")
+                shutil.move(str(source_file), str(output_file))
+                extracted[frame_type].append(str(output_file))
+                extracted_indexes[frame_type] += 1
 
         return extracted
 
-    def _extract_single_frame(self, timestamp: float, output_path: Path):
-        """Extract a single frame at given timestamp."""
+    @staticmethod
+    def _ordered_frames(frames: Dict[str, List[Dict]]) -> List[Dict]:
+        """Return classified frames in their original video order."""
+        return sorted(
+            (frame for frame_list in frames.values() for frame in frame_list),
+            key=lambda frame: frame["frame_num"]
+        )
+
+    def _extract_all_frames(self, output_pattern: str):
+        """Extract all video frames in one FFmpeg process."""
         cmd = [
             "ffmpeg",
             "-v", "quiet",
-            "-ss", str(timestamp),
             "-i", str(self.video_path),
-            "-vframes", "1",
+            "-map", "0:v:0",
+            "-vsync", "0",
             "-y",
-            str(output_path)
+            output_pattern
         ]
         subprocess.run(cmd, check=True)

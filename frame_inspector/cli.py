@@ -2,10 +2,10 @@
 
 import argparse
 import sys
-import os
 from pathlib import Path
 
 from .extractor import FrameExtractor
+from .reports import build_report, write_report
 from .utils import (
     create_frame_grid,
     create_comparison_grid,
@@ -28,9 +28,13 @@ def print_stats(stats: dict, total: int):
 def cmd_analyze(args):
     """Analyze video and show frame statistics."""
     extractor = FrameExtractor(args.video)
-    stats = extractor.get_frame_stats()
+    frames = extractor.analyze_frames()
+    stats = {ftype: len(frame_list) for ftype, frame_list in frames.items()}
     total = sum(stats.values())
     print_stats(stats, total)
+    if args.report:
+        write_report(args.report, build_report(args.video, frames))
+        print(f"Report saved to {args.report}")
 
 
 def cmd_extract(args):
@@ -107,6 +111,8 @@ def main():
     # analyze command
     analyze = subparsers.add_parser("analyze", help="Analyze video frame types")
     analyze.add_argument("video", help="Path to video file")
+    analyze.add_argument("-r", "--report", default=None,
+                         help="Write a .json or .csv frame report")
     analyze.set_defaults(func=cmd_analyze)
 
     # extract command
