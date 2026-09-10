@@ -30,6 +30,12 @@ Display frame type statistics for a video:
 
 ```bash
 python -m frame_inspector.cli analyze video.mp4
+
+# Save frame metadata as JSON
+python -m frame_inspector.cli analyze video.mp4 --report report.json
+
+# Save frame metadata as CSV
+python -m frame_inspector.cli analyze video.mp4 --report report.csv
 ```
 
 ### Extract Frames
@@ -71,6 +77,10 @@ python -m frame_inspector.cli grid output_dir/i_frames -s grid.png
 - **B-Frames (Bidirectional)**: Reference both past and future frames
 
 **Note on extracted file sizes**: In the video stream, P and B frames are much smaller than I-frames because they store only differences from reference frames. When extracted as standalone images, each frame is reconstructed as a full image, so all frame types appear similar in size.
+
+Frame extraction uses one FFmpeg pass to decode the video. The resulting images are then organized into type-specific folders using the frame metadata from FFprobe.
+
+Reports contain frame counts and per-frame timestamps. JSON reports include the video path, summary statistics, and frame records. CSV reports contain one row per frame.
 
 ## Project Structure
 
