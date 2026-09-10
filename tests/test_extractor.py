@@ -10,6 +10,24 @@ from frame_inspector.reports import build_report, write_report
 
 
 class FrameExtractorTests(unittest.TestCase):
+    def test_filter_frames(self):
+        frames = {
+            "I": [{"type": "I", "frame_num": 1, "pts_time": 0.0}],
+            "P": [
+                {"type": "P", "frame_num": 2, "pts_time": 0.04},
+                {"type": "P", "frame_num": 3, "pts_time": 0.08},
+                {"type": "P", "frame_num": 4, "pts_time": 0.12},
+            ],
+            "B": [],
+        }
+        filtered = FrameExtractor.filter_frames(frames, start_time=0.04, every=2)
+
+        self.assertEqual([frame["frame_num"] for frame in filtered["P"]], [2, 4])
+
+    def test_filter_frames_rejects_invalid_range(self):
+        with self.assertRaises(ValueError):
+            FrameExtractor.filter_frames({}, start_time=2, end_time=1)
+
     def test_analyze_frames_groups_supported_types(self):
         probe_output = json.dumps({
             "frames": [
@@ -49,6 +67,32 @@ class FrameExtractorTests(unittest.TestCase):
         self.assertEqual(len(result["I"]), 1)
         self.assertEqual(len(result["P"]), 1)
         extract_all.assert_called_once()
+
+    def test_video_metadata_normalizes_stream_values(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as video:
+            with patch.object(FrameExtractor, "_validate_ffmpeg"), patch.object(
+                FrameExtractor,
+                "get_video_info",
+                return_value={
+                    "format": {
+                        "format_name": "mov,mp4",
+                        "duration": "2.5",
+                        "bit_rate": "1000",
+                    },
+                    "streams": [{
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "width": 1920,
+                        "height": 1080,
+                        "r_frame_rate": "30/1",
+                    }],
+                },
+            ):
+                metadata = FrameExtractor(video.name).get_video_metadata()
+
+        self.assertEqual(metadata["codec"], "h264")
+        self.assertEqual(metadata["frame_rate"], 30.0)
+        self.assertEqual(metadata["duration"], 2.5)
 
 
 class ReportTests(unittest.TestCase):

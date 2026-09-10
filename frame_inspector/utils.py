@@ -36,7 +36,7 @@ def create_frame_grid(
 
 
 def create_comparison_grid(
-    frames_by_type: Dict[str, List[str]],
+    frames_by_type: Dict[str, List],
     max_per_type: int = 3,
     cell_size: tuple = (320, 240)
 ) -> np.ndarray:
@@ -49,8 +49,11 @@ def create_comparison_grid(
     for ftype in ["I", "P", "B"]:
         if ftype not in frames_by_type:
             continue
-        for path in frames_by_type[ftype][:max_per_type]:
-            all_frames.append((path, ftype))
+        for item in frames_by_type[ftype][:max_per_type]:
+            if isinstance(item, dict):
+                all_frames.append((item["path"], ftype, item))
+            else:
+                all_frames.append((item, ftype, {}))
             labels.append(ftype)
 
     if not all_frames:
@@ -64,14 +67,17 @@ def create_comparison_grid(
     grid_w = cols * cell_w
     grid = np.zeros((grid_h, grid_w, 3), dtype=np.uint8)
 
-    for idx, (path, ftype) in enumerate(all_frames):
+    for idx, (path, ftype, metadata) in enumerate(all_frames):
         frame = load_frame(path)
         if frame is None:
             continue
         resized = cv2.resize(frame, (cell_w, cell_h))
         color = type_colors.get(ftype, (255, 255, 255))
+        label = f"{ftype}-Frame"
+        if metadata:
+            label += f"  #{metadata['frame_num']}  {metadata['pts_time']:.3f}s"
         cv2.putText(
-            resized, f"{ftype}-Frame",
+            resized, label,
             (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
             1, color, 2
         )
@@ -94,6 +100,38 @@ def display_grid(grid: np.ndarray, window_name: str = "Frame Grid"):
     """Display a frame grid."""
     cv2.imshow(window_name, grid)
     cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def browse_frames(frames: List[Dict], window_name: str = "Frame Browser"):
+    """Browse extracted frames with left/right keys and quit with q or Esc."""
+    if not frames:
+        return
+    index = 0
+    max_width, max_height = 1280, 720
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, max_width, max_height)
+    while True:
+        item = frames[index]
+        frame = load_frame(item["path"])
+        if frame is None:
+            index = (index + 1) % len(frames)
+            continue
+        label = f"{item['type']}-Frame #{item['frame_num']}  {item['pts_time']:.3f}s"
+        cv2.putText(frame, label, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                    (0, 255, 255), 2)
+        height, width = frame.shape[:2]
+        scale = min(max_width / width, max_height / height, 1.0)
+        if scale < 1.0:
+            frame = cv2.resize(frame, (int(width * scale), int(height * scale)))
+        cv2.imshow(window_name, frame)
+        key = cv2.waitKey(0) & 0xFF
+        if key in (ord("q"), 27):
+            break
+        if key in (ord("n"), 83):
+            index = (index + 1) % len(frames)
+        elif key in (ord("p"), 81):
+            index = (index - 1) % len(frames)
     cv2.destroyAllWindows()
 
 

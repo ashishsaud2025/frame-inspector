@@ -7,6 +7,7 @@ from pathlib import Path
 from .extractor import FrameExtractor
 from .reports import build_report, write_report
 from .utils import (
+    browse_frames,
     create_frame_grid,
     create_comparison_grid,
     display_grid,
@@ -41,7 +42,14 @@ def cmd_extract(args):
     """Extract frames to output directory."""
     extractor = FrameExtractor(args.video)
     types = args.types.split(",") if args.types else None
-    extracted = extractor.extract_frames(args.output, types)
+    extracted = extractor.extract_frames(
+        args.output,
+        types,
+        args.start,
+        args.end,
+        args.every,
+        args.max_frames,
+    )
 
     for ftype, files in extracted.items():
         print(f"{ftype}-Frames: {len(files)} extracted to {args.output}/{ftype}_frames/")
@@ -50,22 +58,14 @@ def cmd_extract(args):
 def cmd_visualize(args):
     """Show frame comparison grid."""
     extractor = FrameExtractor(args.video)
-    frames = extractor.analyze_frames()
-
-    frame_paths = {}
-    for ftype, frame_list in frames.items():
-        frame_paths[ftype] = []
-        for frame in frame_list[:args.max_per_type]:
-            output_dir = Path(args.output) / f"{ftype}_frames"
-            output_file = output_dir / f"frame_{frame['frame_num']:04d}.png"
-            if output_file.exists():
-                frame_paths[ftype].append(str(output_file))
-
-    if not any(frame_paths.values()):
-        print("Extracting frames first...")
-        extracted = extractor.extract_frames(args.output)
-        for ftype, file_list in extracted.items():
-            frame_paths[ftype] = file_list[:args.max_per_type]
+    print("Extracting frames first...")
+    frames = extractor.filter_frames(
+        extractor.analyze_frames(), args.start, args.end, args.every, args.max_frames
+    )
+    extracted = extractor.extract_frames(
+        args.output, None, args.start, args.end, args.every, args.max_frames
+    )
+    frame_paths = _attach_paths(frames, extracted)
 
     if not any(frame_paths.values()):
         print("No frames could be extracted.")
@@ -77,6 +77,57 @@ def cmd_visualize(args):
         print(f"Grid saved to {args.save}")
     else:
         display_grid(grid)
+
+
+def cmd_browse(args):
+    """Browse extracted frames interactively."""
+    extractor = FrameExtractor(args.video)
+    frames = extractor.filter_frames(
+        extractor.analyze_frames(), args.start, args.end, args.every, args.max_frames
+    )
+    extracted = extractor.extract_frames(
+        args.output, None, args.start, args.end, args.every, args.max_frames
+    )
+    items = [item for frame_type in ["I", "P", "B"]
+             for item in _attach_paths(frames, extracted).get(frame_type, [])]
+    if not items:
+        print("No frames could be extracted.")
+        sys.exit(1)
+    browse_frames(items)
+
+
+def cmd_info(args):
+    """Display video stream and container metadata."""
+    import json
+
+    metadata = FrameExtractor(args.video).get_video_metadata()
+    if args.json:
+        print(json.dumps(metadata, indent=2))
+        return
+    for key, value in metadata.items():
+        print(f"{key.replace('_', ' ').title()}: {value}")
+
+
+def _attach_paths(frames, extracted):
+    """Attach extracted paths to frame metadata in type order."""
+    result = {}
+    for frame_type, frame_list in frames.items():
+        result[frame_type] = [
+            {**frame, "path": path}
+            for frame, path in zip(frame_list, extracted.get(frame_type, []))
+        ]
+    return result
+
+
+def _add_filters(parser):
+    parser.add_argument("--start", type=float, default=None,
+                        help="Start timestamp in seconds")
+    parser.add_argument("--end", type=float, default=None,
+                        help="End timestamp in seconds")
+    parser.add_argument("--every", type=int, default=1,
+                        help="Keep every Nth frame after time filtering")
+    parser.add_argument("--max-frames", type=int, default=None,
+                        help="Maximum number of frames to keep")
 
 
 def cmd_grid(args):
@@ -122,6 +173,7 @@ def main():
                          help="Output directory (default: output)")
     extract.add_argument("-t", "--types", default=None,
                          help="Frame types to extract (e.g., I,P,B)")
+    _add_filters(extract)
     extract.set_defaults(func=cmd_extract)
 
     # visualize command
@@ -134,7 +186,22 @@ def main():
                            help="Max frames per type to show")
     visualize.add_argument("-s", "--save", default=None,
                            help="Save grid to file instead of displaying")
+    _add_filters(visualize)
     visualize.set_defaults(func=cmd_visualize)
+
+    # browse command
+    browse = subparsers.add_parser("browse", help="Browse frames interactively")
+    browse.add_argument("video", help="Path to video file")
+    browse.add_argument("-o", "--output", default="output",
+                        help="Output directory (default: output)")
+    _add_filters(browse)
+    browse.set_defaults(func=cmd_browse)
+
+    # info command
+    info = subparsers.add_parser("info", help="Display video metadata")
+    info.add_argument("video", help="Path to video file")
+    info.add_argument("--json", action="store_true", help="Print metadata as JSON")
+    info.set_defaults(func=cmd_info)
 
     # grid command
     grid = subparsers.add_parser("grid", help="Create frame grid")
